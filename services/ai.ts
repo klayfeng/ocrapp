@@ -4,51 +4,79 @@ import { StorageService } from "./storage";
 
 /**
  * 核心识别逻辑：对接自定义 AI 大模型
- * 修复说明：
- * 1. 增加了对 <think> 标签的正则过滤。
- * 2. 增加了基于字符定位的 JSON 块提取逻辑，防止非 JSON 字符干扰。
  */
 export async function processContract(
-  imageBytes: string,
+  imageInput: string, // 兼容 URL 或 Base64
   roiConfig: ROIConfig,
   samples: TrainingSample[] = []
 ): Promise<OCRResult> {
   const startTs = Date.now();
   const config = await StorageService.getModelConfig();
 
-  const fieldDescriptions = Object.entries(roiConfig.fields)
-    .map(([key, info]) => `- ${key} (${info.label}): 区域坐标比例 [${info.coords.join(', ')}]`)
-    .join('\n');
+  // 构造字段映射表，用于后期容错
+  const labelToKeyMap: Record<string, string> = {};
+  const fieldEntries = Object.entries(roiConfig.fields).map(([key, info]) => {
+    labelToKeyMap[info.label] = key;
+    return `${key} (${info.label})`;
+  });
 
   const trainingContext = samples.length > 0 
-    ? `【近期人工核验纠错参考】:\n${samples.slice(-3).map(s => JSON.stringify(s.corrections)).join('\n')}`
+    ? `参考以往纠错示例：\n${samples.slice(-2).map(s => JSON.stringify(s.corrections)).join('\n')}`
     : "";
 
-  const systemPrompt = `你是一个专业的合同 OCR 数据结构化专家。
-任务：从提供的合同样本图片（Base64 格式）中，根据给定的坐标区域提取文字。
-字段要求：
-${fieldDescriptions}
+  // 1. 极其精简的 System Prompt，只负责定义格式和字段
+  const systemPrompt = `你是一个专业的合同 OCR 结构化专家。
+任务：解析用户上传的图片，并严格输出 JSON。
+
+字段列表（Key及对应名称）：
+${fieldEntries.join('\n')}
+
 ${trainingContext}
 
 输出要求：
-1. 必须且只能输出合法的 JSON 字符串。
-2. 严禁包含任何 Markdown 格式标签（如 \`\`\`json）。
-3. 严禁包含任何解释性文字、开场白或结尾语。
-4. 质量评估 quality 包含 ok, metrics(blur_var, brightness_mean, dark_ratio), warnings。
-5. 提取字段存储在 fields 对象中，每个字段包含 value(提取值), conf(置信度0-1), raw(原始文本)。
-6. 如果某区域模糊或无内容，value 为空，raw 说明原因。
+1. 必须输出合法 JSON，包含 quality、fields 和 warnings 三个根对象。
+2. fields 必须包含上述所有 Key。每个字段结构：{"value": "提取文本", "conf": 0.9, "raw": "原始文字"}。
+3. 严禁输出任何 Markdown 标签、<think> 标签或解释性文字。
+4. 如果图片模糊，请在 quality.warnings 中注明，但必须尝试提取。`;
 
-JSON 结构示例：
-{
-  "quality": {"ok": true, "metrics": {"blur_var": 500, "brightness_mean": 180, "dark_ratio": 0.01}, "warnings": []},
-  "fields": { "agreement_no": {"value": "ABC123", "conf": 0.99, "raw": "合同编号：ABC123"} },
-  "warnings": []
-}`;
+  // 判断输入是 URL 还是 Base64
+  const isUrl = imageInput.startsWith('http');
+  
+  // 关键修正：添加 detail: 'auto'，这对于很多模型适配器识别 Base64 至关重要
+  const imageUrlObj = isUrl 
+    ? { 
+        url: imageInput,
+        detail: 'auto' 
+      } 
+    : { 
+        url: `data:image/jpeg;base64,${imageInput.trim()}`,
+        detail: 'auto'
+      };
 
   const callCustomAI = async (mode: string) => {
-    const baseUrl = config.url.endsWith('/') ? config.url.slice(0, -1) : config.url;
-    const fullUrl = baseUrl.includes('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
+    // 确保 URL 处理逻辑健壮，适配火山引擎等标准 OpenAI 接口
+    let baseUrl = config.url.trim();
+    if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+    }
+    
+    // 强制修正：检测到用户可能误填了 /responses (这是非兼容接口)，或者 /api/v3/responses
+    // 我们的代码发送的是 OpenAI 格式的 messages，必须对接 /chat/completions
+    if (baseUrl.endsWith('/responses')) {
+        console.warn(`[AI Config Fix] Converting incompatible endpoint '${baseUrl}' to OpenAI-compatible '/chat/completions'`);
+        baseUrl = baseUrl.replace(/\/responses$/, '/chat/completions');
+    }
 
+    // 自动补全 /chat/completions (如果 URL 不是以它结尾)
+    // 确保最终 URL 是 https://.../chat/completions
+    let fullUrl = baseUrl;
+    if (!baseUrl.endsWith('/chat/completions')) {
+       fullUrl = `${baseUrl}/chat/completions`;
+    }
+
+    console.log(`[AI] Calling Endpoint: ${fullUrl} | Model: ${config.model_name}`);
+
+    // 2. 优化请求体
     const response = await fetch(fullUrl, {
       method: 'POST',
       headers: {
@@ -60,55 +88,102 @@ JSON 结构示例：
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: [
-            { type: 'text', text: `请使用【${mode}】解析该合同图片。注意严格按照字段坐标提取。` },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBytes}` } }
+            { 
+              type: 'text', 
+              text: `请注意：我已经上传了合同图片（${isUrl ? '云端链接' : 'Base64流'}），请执行【${mode}】。请直接返回 JSON 识别结果，不要回复除 JSON 以外的任何内容。` 
+            },
+            { 
+              type: 'image_url', 
+              image_url: imageUrlObj
+            }
           ]}
         ],
-        temperature: 0.1
+        temperature: 0.1,
+        max_tokens: 4096
       })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`AI 服务异常 (${response.status}): ${errText.slice(0, 100)}`);
+      let detailedMsg = '';
+      try {
+        const jsonErr = JSON.parse(errText);
+        // 尝试提取常见的错误字段
+        if (jsonErr.error && jsonErr.error.message) {
+            detailedMsg = jsonErr.error.message;
+        } else if (jsonErr.message) {
+            detailedMsg = jsonErr.message;
+        } else {
+            detailedMsg = JSON.stringify(jsonErr);
+        }
+      } catch (e) {
+          detailedMsg = errText.slice(0, 200);
+      }
+      
+      console.error(`[AI Error] Status: ${response.status} | Body: ${detailedMsg}`);
+      throw new Error(`AI 请求失败 (${response.status}): ${detailedMsg} (URL: ${fullUrl})`);
     }
 
     const data = await response.json();
-    let rawContent = data.choices?.[0]?.message?.content || '{}';
-    
-    // 1. 过滤掉思维链内容 (如 <think>...</think>)
-    rawContent = rawContent.replace(/<think>[\s\S]*?<\/think>/g, '');
+    let content = data.choices?.[0]?.message?.content || '';
 
-    // 2. 提取第一个 '{' 到最后一个 '}' 之间的内容，过滤掉前后可能存在的杂质文字
-    const jsonStart = rawContent.indexOf('{');
-    const jsonEnd = rawContent.lastIndexOf('}');
+    // 3. 强化清洗逻辑
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '');
+    content = content.replace(/```json|```/gi, '').trim();
+
+    const start = content.indexOf('{');
+    const end = content.lastIndexOf('}');
     
-    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-      rawContent = rawContent.substring(jsonStart, jsonEnd + 1);
+    if (start === -1 || end === -1) {
+      console.error("模型原始响应:", content);
+      throw new Error("模型未按预期返回 JSON 格式，请检查模型 Vision 能力。");
     }
     
-    // 3. 移除常见的 Markdown 代码块标记
-    const cleanJson = rawContent
-      .replace(/```json\n?|```/g, '')
-      .trim();
-      
+    const jsonStr = content.substring(start, end + 1);
+
     try {
-      return JSON.parse(cleanJson);
+      const parsed = JSON.parse(jsonStr);
+      
+      // 字段 Key 自动校正映射
+      if (parsed.fields) {
+        const correctedFields: any = {};
+        const expectedKeys = Object.keys(roiConfig.fields);
+        
+        Object.keys(parsed.fields).forEach(aiKey => {
+          if (expectedKeys.includes(aiKey)) {
+            correctedFields[aiKey] = parsed.fields[aiKey];
+          } else if (labelToKeyMap[aiKey]) {
+            correctedFields[labelToKeyMap[aiKey]] = parsed.fields[aiKey];
+          }
+        });
+
+        // 补全缺失项
+        expectedKeys.forEach(k => {
+          if (!correctedFields[k]) {
+            correctedFields[k] = { value: "", conf: 0, raw: "未检出" };
+          }
+        });
+
+        parsed.fields = correctedFields;
+      }
+      
+      return parsed;
     } catch (e) {
-      console.error("AI 响应清洗后解析失败，原始内容:", rawContent);
-      throw new Error("AI 响应格式不兼容，未能解析为有效的 JSON。请确保模型能够输出纯 JSON 格式。");
+      console.error("JSON Parse Error:", e, "Raw Content:", content);
+      throw new Error("AI 返回了非法的 JSON 格式");
     }
   };
 
   try {
+    // 采用双路并发，提高鲁棒性
     const [jsonA, jsonB] = await Promise.all([
-      callCustomAI("快速扫描模式"),
-      callCustomAI("高精度核准模式")
+      callCustomAI("常规扫描"),
+      callCustomAI("精度校验")
     ]);
 
     return {
       ok: true,
-      used_image: 'raw',
+      used_image: isUrl ? 'aligned' : 'raw', // 标记使用云端图
       quality: jsonB.quality || jsonA.quality || { ok: true, metrics: { blur_var: 0, brightness_mean: 0, dark_ratio: 0 }, warnings: [] },
       primaryFields: jsonA.fields || {},
       secondaryFields: jsonB.fields || {},
@@ -116,7 +191,7 @@ JSON 结构示例：
       latency_ms: Date.now() - startTs
     };
   } catch (e: any) {
-    console.error("OCR 处理链路异常:", e);
-    throw new Error(e.message || "大模型处理失败，请稍后重试");
+    console.error("OCR Trace:", e);
+    throw new Error(e.message || "识别链路异常");
   }
 }

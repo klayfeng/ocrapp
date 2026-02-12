@@ -68,3 +68,16 @@ export interface Rect {
   x2: number;
   y2: number;
 }
+
+// 新增：前端队列任务类型
+export interface QueuedTask {
+  internalId: string; // 前端生成的临时ID
+  file: File;
+  preview: string;
+  status: 'pending' | 'compressing' | 'uploading' | 'extracting' | 'completed' | 'failed';
+  progressLabel: string; // 用于显示当前具体在做什么
+  result?: OCRResult; // 成功后的结果
+  recordId?: string; // 成功后的 DB ID
+  errorMsg?: string;
+  consensusRate?: number;
+}

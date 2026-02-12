@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { processContract } from '../services/gemini';
+import { processContract } from '../services/ai';
 import { StorageService } from '../services/storage';
 import { OCRResult, ROIConfig, TrainingSample } from '../types';
 
@@ -58,7 +58,6 @@ const UserPage: React.FC = () => {
       });
       
       setRecordId(id);
-      // 自动滚动到结果区
       setTimeout(() => {
         document.getElementById('ocr-result')?.scrollIntoView({ behavior: 'smooth' });
       }, 300);
@@ -77,7 +76,6 @@ const UserPage: React.FC = () => {
           <p className="text-gray-500 text-xs md:text-sm px-4">拍下或上传合同照片，AI 将实时提取关键信息并加密存档</p>
         </header>
 
-        {/* 上传区域适配移动端 */}
         <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-blue-500/5 border-2 border-dashed border-gray-200 p-4 md:p-8 flex flex-col items-center justify-center space-y-4 min-h-[250px] md:min-h-[350px] relative overflow-hidden transition-all hover:border-blue-400 group">
           {preview ? (
             <div className="absolute inset-0">
@@ -112,18 +110,12 @@ const UserPage: React.FC = () => {
             {loading ? (
               <>
                 <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>识别引擎同步中...</span>
+                <span>大模型解析中...</span>
               </>
             ) : (
               '开始智能提取'
             )}
           </button>
-          
-          {loading && (
-            <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
-              <div className="bg-blue-600 h-full animate-progress-fast"></div>
-            </div>
-          )}
         </div>
 
         {result && recordId && rois && (
@@ -154,25 +146,14 @@ const UserPage: React.FC = () => {
                     </div>
                   ))}
                 </div>
-                <div className="bg-blue-50/80 p-5 rounded-3xl flex items-center gap-4 border border-blue-100">
-                  <div className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center text-blue-600 shadow-sm shrink-0">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                  </div>
-                  <p className="text-[11px] md:text-xs text-blue-600 font-bold leading-relaxed">
-                    所有数据已通过双引擎对比校验并自动录入云端审计系统，管理员可通过后台进行核验。
-                  </p>
-                </div>
               </div>
             </div>
           </div>
         )}
       </div>
-      
       <style>{`
         @keyframes slide-up { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
         .animate-slide-up { animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        @keyframes progress-fast { from { width: 0; } to { width: 100%; } }
-        .animate-progress-fast { animation: progress-fast 4s ease-in-out infinite; }
       `}</style>
     </div>
   );

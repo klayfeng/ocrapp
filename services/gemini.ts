@@ -1,13 +1,15 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { ROIConfig, OCRResult, TrainingSample, FieldResult } from "../types";
+import { ROIConfig, OCRResult, TrainingSample } from "../types";
 
+// Helper function to process contract OCR using Gemini AI models
 export async function processContract(
   imageBytes: string,
   roiConfig: ROIConfig,
   samples: TrainingSample[] = []
 ): Promise<OCRResult> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Use named parameter and direct process.env.API_KEY access
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const startTs = Date.now();
 
   const fieldDescriptions = Object.entries(roiConfig.fields)
@@ -18,8 +20,8 @@ export async function processContract(
     ? `【学习模式开启】参考以往纠错：\n${samples.slice(-5).map(s => `错误纠正: ${JSON.stringify(s.corrections)}`).join('\n')}`
     : "";
 
-  // 共享的识别 Prompt 逻辑
-  const getPrompt = (role: string) => `
+  // Define instruction logic for system configuration
+  const getSystemInstruction = (role: string) => `
     你是一个${role}。
     ${trainingContext}
     任务：从合同图片中提取以下字段，必须严格匹配提供的坐标区域。
@@ -71,29 +73,38 @@ export async function processContract(
     required: ["quality", "fields", "warnings"]
   };
 
-  // 并行启动两个引擎：Flash (速度) 和 Pro (模拟 GLM-OCR 的高精度)
+  // Run recognition using both gemini-3-flash-preview and gemini-3-pro-preview
   const [resA, resB] = await Promise.all([
     ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: [{ parts: [{ text: getPrompt("快速识别助手") }, { inlineData: { mimeType: 'image/jpeg', data: imageBytes } }] }],
-      config: { responseMimeType: "application/json", responseSchema: schema }
+      contents: [{ parts: [{ inlineData: { mimeType: 'image/jpeg', data: imageBytes } }] }],
+      config: { 
+        systemInstruction: getSystemInstruction("快速识别助手"),
+        responseMimeType: "application/json", 
+        responseSchema: schema 
+      }
     }),
     ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ parts: [{ text: getPrompt("深度审计专家（专注于笔迹识别与逻辑校验）") }, { inlineData: { mimeType: 'image/jpeg', data: imageBytes } }] }],
-      config: { responseMimeType: "application/json", responseSchema: schema }
+      contents: [{ parts: [{ inlineData: { mimeType: 'image/jpeg', data: imageBytes } }] }],
+      config: { 
+        systemInstruction: getSystemInstruction("深度审计专家（专注于笔迹识别与逻辑校验）"),
+        responseMimeType: "application/json", 
+        responseSchema: schema 
+      }
     })
   ]);
 
+  // Extract text results via the .text property
   const jsonA = JSON.parse(resA.text || '{}');
   const jsonB = JSON.parse(resB.text || '{}');
 
   return {
     ok: true,
     used_image: 'raw',
-    quality: jsonB.quality, // 以 Pro 引擎的质量评估为准
-    primaryFields: jsonA.fields,
-    secondaryFields: jsonB.fields,
+    quality: jsonB.quality || jsonA.quality,
+    primaryFields: jsonA.fields || {},
+    secondaryFields: jsonB.fields || {},
     warnings: [...(jsonA.warnings || []), ...(jsonB.warnings || [])],
     latency_ms: Date.now() - startTs
   };

@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { StorageService } from '../services/storage';
 import { ROIConfig, Rect, ROIField } from '../types';
@@ -39,7 +38,8 @@ const ROIPage: React.FC = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(imgRef.current, 0, 0);
 
-    Object.entries(rois.fields).forEach(([key, info]) => {
+    // Fix: cast Object.entries to ROIField to fix 'unknown' property access for coords and label (lines 43, 59)
+    (Object.entries(rois.fields) as [string, ROIField][]).forEach(([key, info]) => {
       const [nx1, ny1, nx2, ny2] = info.coords;
       const x1 = nx1 * canvas.width;
       const y1 = ny1 * canvas.height;
@@ -207,7 +207,7 @@ const ROIPage: React.FC = () => {
                 onChange={(e) => setSelectedField(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none"
               >
-                {Object.entries(rois.fields).map(([k, v]) => <option key={k} value={k}>{v.label} ({k})</option>)}
+                {Object.entries(rois.fields).map(([k, v]) => <option key={k} value={k}>{(v as ROIField).label} ({k})</option>)}
               </select>
             </div>
 
@@ -217,9 +217,11 @@ const ROIPage: React.FC = () => {
                   <label className="text-[10px] font-bold text-gray-400 block mb-1">字段显示名称 (中文)</label>
                   <input 
                     type="text" 
-                    value={rois.fields[selectedField].label}
+                    // Fix: cast to ROIField to resolve unknown property access on line 210
+                    value={(rois.fields[selectedField] as ROIField).label}
                     onChange={(e) => {
-                      const newFields = { ...rois.fields, [selectedField]: { ...rois.fields[selectedField], label: e.target.value } };
+                      // Fix: cast to ROIField to avoid unknown spread/property access
+                      const newFields = { ...rois.fields, [selectedField]: { ...(rois.fields[selectedField] as ROIField), label: e.target.value } };
                       syncToCloud({ ...rois, fields: newFields });
                     }}
                     className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none"

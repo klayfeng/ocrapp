@@ -1,0 +1,7 @@
+{
+  "name": "合同OCR商业闭环系统",
+  "description": "包含C端拍照上传与B端数据治理的闭环OCR平台",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

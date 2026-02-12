@@ -42,38 +42,57 @@ const UserPage: React.FC = () => {
     }
   };
 
-  // --- 图片压缩逻辑 (保持不变) ---
-  const compressImage = (originalFile: File): Promise<{ blob: Blob, base64: string }> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = URL.createObjectURL(originalFile);
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        const MAX_SIDE = 1280;
-        if (width > height) {
-          if (width > MAX_SIDE) { height = Math.round((height * MAX_SIDE) / width); width = MAX_SIDE; }
-        } else {
-          if (height > MAX_SIDE) { width = Math.round((width * MAX_SIDE) / height); height = MAX_SIDE; }
+// --- 图片压缩逻辑 (保持不变) ---
+const compressImage = (
+  originalFile: File
+): Promise<{ blob: Blob; base64: string }> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = URL.createObjectURL(originalFile);
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      const MAX_SIDE = 1280;
+
+      if (width > height) {
+        if (width > MAX_SIDE) {
+          height = Math.round((height * MAX_SIDE) / width);
+          width = MAX_SIDE;
         }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, width, height);
-            ctx.drawImage(img, 0, 0, width, height);
+      } else {
+        if (height > MAX_SIDE) {
+          width = Math.round((width * MAX_SIDE) / height);
+          height = MAX_SIDE;
         }
-        const QUALITY = 0.5;
-        const base64Full = canvas.toDataURL('image/jpeg', QUALITY);
-        const base64 = base64Full.split(',')[1];
-        canvas.toBlob((blob) => {
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+      }
+
+      const QUALITY = 0.5;
+      const base64Full = canvas.toDataURL('image/jpeg', QUALITY);
+      const base64 = base64Full.split(',')[1];
+
+      canvas.toBlob(
+        (blob) => {
           resolve({ blob: blob || originalFile, base64 });
-        }, 'image/jpeg', QUALITY);
+        },
+        'image/jpeg',
+        QUALITY
+        );
       };
-    };
+    });
   };
+
 
   // --- 核心任务处理逻辑 ---
   const processTask = async (task: QueuedTask, roiConfig: ROIConfig) => {

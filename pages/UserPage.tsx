@@ -82,16 +82,12 @@ const compressImage = (
       const base64Full = canvas.toDataURL('image/jpeg', QUALITY);
       const base64 = base64Full.split(',')[1];
 
-      canvas.toBlob(
-        (blob) => {
-          resolve({ blob: blob || originalFile, base64 });
-        },
-        'image/jpeg',
-        QUALITY
-        );
-      };
-    });
-  };
+      canvas.toBlob((blob) => {
+        resolve({ blob: blob || originalFile, base64 });
+      }, 'image/jpeg', QUALITY);
+    };
+  });
+};
 
 
   // --- 核心任务处理逻辑 ---

@@ -9,6 +9,13 @@ export interface ROIConfig {
   fields: Record<string, ROIField>;
 }
 
+export interface AIModelConfig {
+  id?: number;
+  url: string;
+  api_key: string;
+  model_name: string;
+}
+
 export interface FieldResult {
   value: string;
   conf: number;
@@ -34,7 +41,7 @@ export interface OCRResult {
 }
 
 export interface UserRecord {
-  id: string; // OCR-20231027-001
+  id: string;
   timestamp: number;
   imageUrl: string;
   result: OCRResult;
